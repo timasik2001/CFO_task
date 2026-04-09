@@ -1,14 +1,33 @@
 from typing import Optional
 
+import numpy as np
 import pandas as pd
 
-from globals import date
+"""
+Each class represents one report
+"""
 
 
 class EventTypeAnalysis:
     def __init__(self, df: pd.DataFrame):
-        self.LABEL = "Анализ совершённых событий пользователями"
-        self.report: Optional[pd.DataFrame] = None
+
+        df = df.groupby(["user_session"])["event_type"].apply(set).reset_index()
+        df["has_cart"] = df["event_type"].apply(lambda x: "cart" in x)
+        df["has_view"] = df["event_type"].apply(lambda x: "view" in x)
+        df["has_purchase"] = df["event_type"].apply(lambda x: "purchase" in x)
+
+        self.LABEL = "Анализ совершённых событий"
+        self.report = pd.DataFrame(
+            columns=[self.LABEL],
+            index=[
+                "Количество сессий",
+                "Просмотры",
+                "Добавлений в карзину",
+                "Покупок",
+                "% просмотров",
+                "% добавлений в карзину",
+                "% покупок"
+                ])
         self.total_sessions = len(df)
 
         self.views = df["has_view"].sum()
@@ -19,58 +38,76 @@ class EventTypeAnalysis:
         self.cart_percentage = round(self.carts / self.total_sessions, 3)
         self.purchases_percentage = round(self.purchases / self.total_sessions, 3)
 
-    def make_report(self) -> pd.DataFrame:
-        self.report = pd.DataFrame(
-            columns=[self.LABEL],
-            index=[
-                "Колличество сессий",
-                "Просмотры",
-                "Добавлений в карзину",
-                "Покупок",
-                "% просмотров",
-                "% добавлений в карзину",
-                "% покупок"
-                ])
-        self.df.loc["Колличество сессий", self.LABEL] = self.total_sessions
-        self.df.loc["Просмотры", self.LABEL] = self.views
-        self.df.loc["Добавлений в карзину", self.LABEL] = self.carts
-        self.df.loc["Покупок", self.LABEL] = self.purchases
-        self.df.loc["% просмотров", self.LABEL] = self.view_percentage
-        self.df.loc["% добавлений в карзину", self.LABEL] = self.cart_percentage
-        self.df.loc["% покупок", self.LABEL] = self.purchases_percentage
-
-    def dump_report(self):
-        with pd.ExcelWriter(f"{date['start']} - {date['end']}.xlsx") as writer:
-            self.report.to_excel(writer, sheet_name=self.LABEL)
+    def make_report(self):
+        self.report.loc["Количество сессий", self.LABEL] = self.total_sessions
+        self.report.loc["Просмотры", self.LABEL] = self.views
+        self.report.loc["Добавлений в карзину", self.LABEL] = self.carts
+        self.report.loc["Покупок", self.LABEL] = self.purchases
+        self.report.loc["% просмотров", self.LABEL] = self.view_percentage
+        self.report.loc["% добавлений в карзину", self.LABEL] = self.cart_percentage
+        self.report.loc["% покупок", self.LABEL] = self.purchases_percentage
 
 
-def event_type_report(df):
-    event_type_df = df.groupby(["user_session"])["event_type"].apply(set).reset_index()
-    event_type_df["has_view"] = event_type_df["event_type"].apply(lambda x: "view" in x)
-    event_type_df["has_cart"] = event_type_df["event_type"].apply(lambda x: "cart" in x)
-    event_type_df["has_purchase"] = event_type_df["event_type"].apply(lambda x: "purchase" in x)
-
-    event_type_analysis = EventTypeAnalysis(event_type_df)
-    event_type_analysis.make_report()
-    event_type_analysis.dump_report()
-
-
-class CategoryCodeRating:
-    def __init__(self, df):
-        self.LABEL = "Рейтинг категорий товаров по покупке"
-        self.df: pd.DataFrame = df
-        self.report: Optional[pd.DataFrame] = None
+class CategoryCodeRatingAnalysis:
+    def __init__(self, df: pd.DataFrame):
+        self.LABEL = "Рейтинг категорий товаров"
+        self.report: pd.DataFrame = df
 
     def make_report(self):
-        purchases_df = self.df[self.df["event_type"] == "purchase"]
+        purchases_df = self.report[self.report["event_type"] == "purchase"]
         self.report = purchases_df.groupby("category_code")["product_id"].count().sort_values(ascending=False).reset_index()
-        self.report.columns = ["Категория товара", "Колличество совершенных покупок"]
-
-    def dump_report(self):
-        with pd.ExcelWriter(f"{date['start']} - {date['end']}.xlsx") as writer:
-            self.report.to_excel(writer, sheet_name=self.LABEL)
+        self.report.columns = ["Категория товара", "Количество совершенных покупок"]
 
 
-def category_code_rating(df):
-    category_code_rating_analysis = CategoryCodeRating(df)
-    category_code_rating_analysis.dump_report()
+class TimeBeforePurchaseAnalysis:
+    def __init__(self, df: pd.DataFrame):
+        self.LABEL = "Время перед покупкой"
+        self.report: pd.DataFrame = df
+
+    @staticmethod
+    def calc_time_diffs(session_df):
+
+        first_view = session_df[session_df["event_type"] == "view"]["event_time"].min()
+        purchase = session_df[session_df["event_type"] == "purchase"]["event_time"].min()
+
+        result = {
+            "price": np.nan,
+            "total_seconds": np.nan
+        }
+
+        if pd.notna(first_view) and pd.notna(purchase) and purchase >= first_view:
+            result["price"] = session_df[session_df["event_type"] == "purchase"]["price"].min()
+            result["total_seconds"] = (purchase - first_view).total_seconds()
+        return pd.Series(result)
+
+    def make_report(self):
+        session_time_sorted_df = self.report.sort_values(["user_session", "event_time"])
+
+        self.report = session_time_sorted_df.groupby('user_session').apply(TimeBeforePurchaseAnalysis.calc_time_diffs).reset_index().dropna()
+        self.report.sort_values("price", inplace=True)
+
+
+def make_reports(df, start, end):
+    # 1
+    event_type_analysis = EventTypeAnalysis(df)
+    event_type_analysis.make_report()
+
+    # 2
+    category_code_rating = CategoryCodeRatingAnalysis(df)
+    category_code_rating.make_report()
+
+    # 3
+    time_before_puchase = TimeBeforePurchaseAnalysis(df)
+    time_before_puchase.make_report()
+    # dump all reports
+    with pd.ExcelWriter(f"output/{start} - {end}.xlsx") as writer:
+        event_type_analysis.report.to_excel(writer,
+                                            sheet_name=event_type_analysis.LABEL,)
+
+        category_code_rating.report.to_excel(writer,
+                                             sheet_name=category_code_rating.LABEL,
+                                             index=False)
+
+        time_before_puchase.report.to_excel(writer,
+                                            sheet_name=time_before_puchase.LABEL,
+                                            index=False)

@@ -1,13 +1,15 @@
 import pandas as pd
 
-from globals import date
+"""
+Utility functions
+"""
 
 
-def set_time_intervals(df) -> pd.DataFrame:
+def set_time_intervals(df, start, end) -> pd.DataFrame:
     # возможно требует рефактора, не нашёл другого решения т.к коструктор
     # Timestamp не принимает аргумент format для даты
-    start = list(map(int, date["start"].split(".")))
-    end = list(map(int, date["end"].split(".")))
+    start = list(map(int, start.split(".")))
+    end = list(map(int, end.split(".")))
     start_ts = pd.Timestamp(day=start[0],
                             month=start[1],
                             year=start[2],
